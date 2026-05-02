@@ -23,12 +23,15 @@ import Image from 'next/image';
 const CURRENT_USER_ID = '6'; // Simulating "Tiến Phan" as the logged-in user
 
 // custom node
-const MemberNode = ({ data }: { data: { member: Member; members: Member[]; onSelect: (m: Member) => void; selectedMemberId?: string; layoutModel?: 1 | 2 | 3 | 4 } }) => {
-  const { member, members, onSelect, selectedMemberId, layoutModel } = data;
+const MemberNode = ({ data }: { data: { member: Member; members: Member[]; onSelect: (m: Member) => void; selectedMemberId?: string; layoutModel?: 1 | 2 | 3 | 4; spouseIndex?: number } }) => {
+  const { member, members, onSelect, selectedMemberId, layoutModel, spouseIndex } = data;
   
   const isFemale = member.gender === Gender.FEMALE;
   const isChief = member.isChief;
   const isMeScope = member.id === CURRENT_USER_ID;
+  
+  // Polygamy labels
+  const spouseLabel = spouseIndex === 0 ? "Chính thất" : spouseIndex !== undefined ? "Thứ thất" : null;
   
   // Highlighting relative to selected member if exists, else relative to current user
   const highlightBaseId = selectedMemberId || CURRENT_USER_ID;
@@ -114,6 +117,13 @@ const MemberNode = ({ data }: { data: { member: Member; members: Member[]; onSel
         )}>
           {isMeScope && !selectedMemberId ? "Tôi" : member.fullName}
         </p>
+        
+        {spouseLabel && (
+          <p className="text-[9px] text-[#C19A6B] font-bold uppercase mt-0.5 tracking-tighter">
+            ({spouseLabel})
+          </p>
+        )}
+
         {member.hieuName && (
           <p className="text-[11px] italic text-gray-500 mt-1">
             &ldquo;{member.hieuName}&rdquo;
@@ -148,15 +158,59 @@ function GenealogyTreeContent({
   members: Member[]; 
   onSelectMember: (m: Member) => void;
   layoutModel?: 1 | 2 | 3 | 4;
-  viewMode?: 'all' | 'paternal' | 'maternal';
+  viewMode?: 'all' | 'paternal' | 'maternal' | 'nam-dinh';
   selectedMemberId?: string;
 }) {
   const { setCenter } = useReactFlow();
 
   const filteredMembers = useMemo(() => {
-    if (viewMode === 'all' || !selectedMemberId) return members;
+    if (viewMode === 'all') return members;
     
     const result = new Set<string>();
+    
+    if (viewMode === 'nam-dinh') {
+      // Find top ancestors (Generation 1)
+      const roots = members.filter(m => m.generation === 1);
+      
+      const processNamDinh = (mId: string) => {
+        const m = members.find(x => x.id === mId);
+        if (!m) return;
+        
+        result.add(m.id);
+        
+        // Add wives/spouses
+        m.spouseIds.forEach(sId => result.add(sId));
+        
+        // Process children
+        m.childrenIds.forEach(cId => {
+          const child = members.find(x => x.id === cId);
+          if (!child) return;
+          
+          if (child.gender === Gender.MALE) {
+            processNamDinh(child.id);
+          } else if (child.spouseIds.length === 0) {
+            // Unmarried daughter
+            result.add(child.id);
+          }
+          // Married daughters are included if we want to show the leaf, but their subtree is cut.
+          // Based on user: "cộng thêm những người con gái CHƯA có chồng. Cắt bỏ toàn bộ nhánh hậu duệ của con gái đã lấy chồng"
+          // This implies if a daughter HAS a husband, she is excluded OR just her branches are cut.
+          // Usually "Nam Dinh" excludes married out daughters.
+        });
+      };
+      
+      roots.forEach(r => {
+        if (r.gender === Gender.MALE) processNamDinh(r.id);
+        else {
+          // If root is female (unlikely for "Thuy To" usually, but possible in data)
+          result.add(r.id);
+        }
+      });
+      
+      return members.filter(m => result.has(m.id));
+    }
+
+    if (!selectedMemberId) return members;
     const selected = members.find(m => m.id === selectedMemberId);
     if (!selected) return members;
 
@@ -193,7 +247,6 @@ function GenealogyTreeContent({
       });
       
       if (motherId) {
-        // Find highest ancestor of the mother to show the full maternal clan
         let maternalRoot = members.find(m => m.id === motherId);
         if (maternalRoot) {
           while (maternalRoot.parentId) {
@@ -205,7 +258,6 @@ function GenealogyTreeContent({
         }
       } else {
         if (selected.gender === Gender.FEMALE) {
-          // If selected is female, show her full branch from her highest ancestor
           let root = selected;
           while (root.parentId) {
             const p = members.find(m => m.id === root.parentId);
@@ -258,17 +310,23 @@ function GenealogyTreeContent({
           position: { x, y },
         });
 
-        // Add children in radial spread
-        if (member.childrenIds.length > 0) {
-          const childSpread = spread / (member.childrenIds.length + 1);
-          member.childrenIds.forEach((cId, idx) => {
+        // Add children in radial spread (sorted by birthOrder)
+        const sortedChildren = [...member.childrenIds].sort((a, b) => {
+          const mA = membersToRender.find(m => m.id === a);
+          const mB = membersToRender.find(m => m.id === b);
+          return (mA?.birthOrder || 0) - (mB?.birthOrder || 0);
+        });
+
+        if (sortedChildren.length > 0) {
+          const childSpread = spread / (sortedChildren.length + 1);
+          sortedChildren.forEach((cId, idx) => {
             const childAngle = angle - spread/2 + childSpread * (idx + 1);
             addRadial(cId, depth + 1, childAngle, spread / 2);
           });
         }
 
-        // Add spouse next to member
-        member.spouseIds.forEach(sId => {
+        // Add spouses in radial spread
+        member.spouseIds.forEach((sId, sIdx) => {
           if (!visited.has(sId)) {
             const spouse = membersToRender.find(m => m.id === sId);
             if (spouse) {
@@ -276,8 +334,15 @@ function GenealogyTreeContent({
               nodes.push({
                 id: spouse.id,
                 type: 'member',
-                data: { member: spouse, members: membersToRender, onSelect: onSelectMember, selectedMemberId, layoutModel },
-                position: { x: x + 150, y: y + 50 },
+                data: { 
+                  member: spouse, 
+                  members: membersToRender, 
+                  onSelect: onSelectMember, 
+                  selectedMemberId, 
+                  layoutModel,
+                  spouseIndex: sIdx
+                },
+                position: { x: x + 150 + (sIdx * 160), y: y + 50 },
               });
             }
           }
@@ -290,11 +355,15 @@ function GenealogyTreeContent({
 
     // Horizontal Layout (Model 4) - Dạng cột
     if (layoutModel === 4) {
-      const genWidth = 450;
+      const genWidth = 600;
       const memberHeight = 220;
       
       generations.forEach((gen, gIdx) => {
         const genMembers = membersToRender.filter(m => m.generation === gen);
+        // Sort gen members? Usually we want to follow parents. 
+        // For simplicity we just follow order but sorting by birthOrder helps if they have same parent.
+        genMembers.sort((a, b) => (a.birthOrder || 0) - (b.birthOrder || 0));
+
         let currentY = 0;
         const processedIds = new Set<string>();
 
@@ -315,27 +384,29 @@ function GenealogyTreeContent({
           });
           processedIds.add(member.id);
 
-          const spouseId = member.spouseIds[0];
-          const spouse = spouseId ? membersToRender.find(m => m.id === spouseId && m.generation === gen) : null;
-          
-          if (spouse) {
-            nodes.push({
-              id: spouse.id,
-              type: 'member',
-              data: { 
-                member: spouse, 
-                members: membersToRender, 
-                onSelect: onSelectMember,
-                selectedMemberId,
-                layoutModel
-              },
-              position: { x: gIdx * genWidth, y: currentY + 180 },
-            });
-            processedIds.add(spouse.id);
-            currentY += memberHeight * 2;
-          } else {
-            currentY += memberHeight;
-          }
+          // All spouses
+          member.spouseIds.forEach((sId, sIdx) => {
+            const spouse = membersToRender.find(m => m.id === sId && m.generation === gen);
+            if (spouse && !processedIds.has(sId)) {
+              nodes.push({
+                id: spouse.id,
+                type: 'member',
+                data: { 
+                  member: spouse, 
+                  members: membersToRender, 
+                  onSelect: onSelectMember,
+                  selectedMemberId,
+                  layoutModel,
+                  spouseIndex: sIdx
+                },
+                position: { x: gIdx * genWidth, y: currentY + (sIdx + 1) * 180 },
+              });
+              processedIds.add(spouse.id);
+            }
+          });
+
+          const maxSpouses = member.spouseIds.filter(id => membersToRender.some(m => m.id === id)).length;
+          currentY += memberHeight * (maxSpouses + 1);
         });
       });
       return nodes;
@@ -344,6 +415,12 @@ function GenealogyTreeContent({
     // Vertical Layouts (Model 1 & 2)
     generations.forEach(gen => {
       const genMembers = membersToRender.filter(m => m.generation === gen);
+      // Sort by parent then birthOrder for visual grouping
+      genMembers.sort((a, b) => {
+        if (a.parentId !== b.parentId) return (a.parentId || '').localeCompare(b.parentId || '');
+        return (a.birthOrder || 0) - (b.birthOrder || 0);
+      });
+
       let currentX = 0;
       const processedIds = new Set<string>();
 
@@ -360,43 +437,47 @@ function GenealogyTreeContent({
             selectedMemberId,
             layoutModel
           },
-          position: { x: currentX, y: (gen - 1) * 320 },
+          position: { x: currentX, y: (gen - 1) * 350 },
         });
         processedIds.add(member.id);
 
-        const spouseId = member.spouseIds[0];
-        const spouse = spouseId ? membersToRender.find(m => m.id === spouseId && m.generation === gen) : null;
-        
-        if (spouse) {
-          nodes.push({
-            id: spouse.id,
-            type: 'member',
-            data: { 
-              member: spouse, 
-              members: membersToRender, 
-              onSelect: onSelectMember,
-              selectedMemberId,
-              layoutModel
-            },
-            position: { x: currentX + 260, y: (gen - 1) * 320 },
-          });
-          processedIds.add(spouse.id);
+        // All spouses
+        let spouseX = currentX + 260;
+        member.spouseIds.forEach((sId, sIdx) => {
+          const spouse = membersToRender.find(m => m.id === sId && m.generation === gen);
+          if (spouse && !processedIds.has(sId)) {
+            nodes.push({
+              id: spouse.id,
+              type: 'member',
+              data: { 
+                member: spouse, 
+                members: membersToRender, 
+                onSelect: onSelectMember,
+                selectedMemberId,
+                layoutModel,
+                spouseIndex: sIdx
+              },
+              position: { x: spouseX, y: (gen - 1) * 350 },
+            });
+            processedIds.add(spouse.id);
 
-          if (layoutModel === 2) {
-            const commonChildren = member.childrenIds.filter(id => spouse.childrenIds.includes(id));
-            if (commonChildren.length > 0) {
-              nodes.push({
-                id: `union-${member.id}-${spouseId}`,
-                type: 'union',
-                data: { layoutModel },
-                position: { x: currentX + 230, y: (gen - 1) * 320 + 85 },
-              });
+            if (layoutModel === 2) {
+              const commonChildren = member.childrenIds.filter(id => spouse.childrenIds.includes(id));
+              if (commonChildren.length > 0) {
+                nodes.push({
+                  id: `union-${member.id}-${sId}`,
+                  type: 'union',
+                  data: { layoutModel },
+                  position: { x: spouseX - 30, y: (gen - 1) * 350 + 85 },
+                });
+              }
             }
+            spouseX += 260;
           }
-          currentX += 580; 
-        } else {
-          currentX += 340; 
-        }
+        });
+
+        const activeSpouses = member.spouseIds.filter(id => membersToRender.some(m => m.id === id)).length;
+        currentX += 340 + (activeSpouses * 260);
       });
     });
     
@@ -413,14 +494,19 @@ function GenealogyTreeContent({
         const father = membersToRender.find(m => m.id === member.parentId);
         const mother = father?.spouseIds.length ? membersToRender.find(m => father.spouseIds.includes(m.id) && m.childrenIds.includes(member.id)) : null;
 
+        const isAdopted = member.isAdopted;
+        const edgeStyle = isAdopted 
+          ? { stroke: '#A0A0A0', strokeWidth: 2, strokeDasharray: '5 5' } 
+          : { stroke: '#D4AF37', strokeWidth: 2 };
+
         if (layoutModel === 2 && father && mother && membersToRender.find(m => m.id === mother.id)) {
           edges.push({
             id: `e-union-${member.id}`,
             source: `union-${father.id}-${mother.id}`,
             target: member.id,
             sourceHandle: 'bottom',
-            animated: true,
-            style: { stroke: '#D4AF37', strokeWidth: 2 },
+            animated: !isAdopted,
+            style: edgeStyle,
           });
         } else {
           const parentInView = membersToRender.find(m => m.id === member.parentId);
@@ -429,10 +515,10 @@ function GenealogyTreeContent({
               id: `e-${member.parentId}-${member.id}`,
               source: member.parentId,
               target: member.id,
-              animated: true,
+              animated: !isAdopted,
               targetHandle: layoutModel === 4 ? 'left' : 'top',
               sourceHandle: layoutModel === 4 ? 'right' : 'bottom',
-              style: { stroke: '#D4AF37', strokeWidth: 2 },
+              style: edgeStyle,
             });
           }
         }

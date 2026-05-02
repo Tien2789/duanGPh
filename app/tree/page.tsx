@@ -22,7 +22,7 @@ export default function TreePage() {
     }
     return 2;
   });
-  const [viewMode, setViewMode] = useState<'all' | 'paternal' | 'maternal'>('all');
+  const [viewMode, setViewMode] = useState<'all' | 'paternal' | 'maternal' | 'nam-dinh'>('all');
 
   useEffect(() => {
     fetch('/api/tree')
@@ -179,6 +179,15 @@ export default function TreePage() {
                     )}
                   >
                     BÊN NGOẠI
+                  </button>
+                  <button 
+                    onClick={() => setViewMode('nam-dinh')}
+                    className={cn(
+                      "flex-1 py-1.5 text-[9px] font-bold rounded transition-all",
+                      viewMode === 'nam-dinh' ? "bg-white text-[var(--color-son)] shadow" : "text-white hover:bg-white/5"
+                    )}
+                  >
+                    NAM ĐINH
                   </button>
                 </div>
               </div>
