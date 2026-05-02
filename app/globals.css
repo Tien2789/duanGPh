@@ -1,0 +1,54 @@
+@import "tailwindcss";
+
+@theme {
+  --color-son: #8B0000; /* Đỏ son */
+  --color-dong: #D4AF37; /* Vàng đồng */
+  --color-dong-muted: rgba(212, 175, 55, 0.2);
+  --color-xuyen: #FDF5E6; /* Giấy xuyến chỉ */
+  --color-muc: #2D2D2D; /* Màu mực (Ink) */
+  
+  --font-serif: "Lora", serif;
+  --font-sans: "Inter", sans-serif;
+}
+
+@layer base {
+  body {
+    @apply bg-[var(--color-xuyen)] text-[var(--color-muc)] font-sans antialiased leading-relaxed;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-serif font-semibold text-[var(--color-son)] tracking-wide;
+  }
+}
+
+@keyframes cloudMove {
+  from { background-position: 0 0; }
+  to { background-position: 1000px 0; }
+}
+
+.high-density-grid {
+  background-image: radial-gradient(rgba(212, 175, 55, 0.2) 0.5px, transparent 0.5px);
+  background-size: 20px 20px;
+}
+
+.cloud-header-pattern {
+  background-image: radial-gradient(#FDF5E6 60%, transparent 100%), url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCA0MCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJNMCAxMkMxMCA2IDE1IDE4IDI1IDEyQzM1IDYgNDAgMTggNTAgMTIiIHN0cm9rZT0iI0Q0QUYzNyIgc3Ryb2tlLXdpZHRoPSIwLjUiLz48L3N2Zz4=');
+  background-repeat: repeat-x;
+  animation: cloudMove 60s linear infinite;
+}
+
+.scroll-bg {
+  @apply relative bg-[#F9F1E0] border-2 border-[#D4AF37]/30 rounded-lg shadow-inner overflow-hidden;
+  background-image: url("https://www.transparenttextures.com/patterns/natural-paper.png");
+}
+
+.scroll-bg::before {
+  content: "";
+  @apply absolute inset-0 opacity-10 pointer-events-none;
+  background-image: url("data:image/svg+xml,%3Csvg width='200' height='200' viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3%3Cpath d='M0 100 Q50 50 100 100 T200 100' fill='none' stroke='%23D4AF37' stroke-width='0.5'/%3E%3C/svg%3E");
+  background-size: 400px 400px;
+}
+
+.paper-texture {
+  background-image: url("https://www.transparenttextures.com/patterns/natural-paper.png");
+}
