@@ -42,10 +42,24 @@ export function getKinshipLabel(member: Member, members: Member[], currentUserId
     const father = members.find(x => x.id === me.parentId);
     const mother = members.find(x => (father?.spouseIds.includes(x.id) || x.childrenIds.includes(currentUserId)) && x.gender === Gender.FEMALE);
     
+    const getAncestors = (id: string) => {
+      const path = new Set<string>();
+      let curr = members.find(x => x.id === id);
+      while(curr) {
+        path.add(curr.id);
+        if(!curr.parentId) break;
+        curr = members.find(x => x.id === curr!.parentId);
+      }
+      return path;
+    };
+
+    const fatherAncestors = father ? getAncestors(father.id) : new Set<string>();
+    const motherAncestors = mother ? getAncestors(mother.id) : new Set<string>();
+
     let curr: Member | undefined = m;
     while (curr) {
-      if (curr.id === father?.id) return 'nội';
-      if (curr.id === mother?.id) return 'ngoại';
+      if (fatherAncestors.has(curr.id)) return 'nội';
+      if (motherAncestors.has(curr.id)) return 'ngoại';
       if (!curr.parentId) break;
       curr = members.find(x => x.id === curr!.parentId);
     }
@@ -183,9 +197,22 @@ export function getKinshipLabel(member: Member, members: Member[], currentUserId
   // 9. Cousins (Anh chị em họ)
   if (member.parentId) {
     const pParent = members.find(p => p.id === member.parentId);
-    const side = getSide(pParent || member);
+    const side = pParent ? getSide(pParent) : '';
     
     if (side && member.parentId !== me.parentId) {
+      if (member.generation < me.generation) {
+        // This is an Aunt/Uncle from a side branch
+        const isOlder = (member.birthOrder || 0) < (father?.birthOrder || 0); // Roughly compared to parent
+        const sideText = side === 'nội' ? 'bên nội' : 'bên ngoại';
+        let base = '';
+        if (side === 'nội') {
+          base = member.gender === Gender.FEMALE ? 'Cô' : (isOlder ? 'Bác' : 'Chú');
+        } else {
+          base = member.gender === Gender.FEMALE ? 'Dì' : 'Cậu';
+        }
+        return { label: `${base}${ordinal}`, subLabel: `${base} (họ, ${sideText})` };
+      }
+      
       let label = '';
       const isOlder = member.generation < me.generation || (member.generation === me.generation && (member.birthOrder || 0) < (me.birthOrder || 0));
       
@@ -200,7 +227,20 @@ export function getKinshipLabel(member: Member, members: Member[], currentUserId
     }
   }
 
-  // 10. Grandchildren (Cháu Nội/Ngoại)
+  // 10. Spouse of Cousins
+  const spouseOf = members.find(s => s.spouseIds.includes(member.id));
+  if (spouseOf) {
+    const spouseLabel = getKinshipLabel(spouseOf, members, currentUserId);
+    if (spouseLabel?.label.includes('Họ')) {
+      const isOlder = spouseOf.generation < me.generation || (spouseOf.generation === me.generation && (spouseOf.birthOrder || 0) < (me.birthOrder || 0));
+      let label = '';
+      if (member.gender === Gender.FEMALE) label = isOlder ? 'Chị Dâu (họ)' : 'Em Dâu (họ)';
+      else label = isOlder ? 'Anh Rể (họ)' : 'Em Rể (họ)';
+      return { label, subLabel: `${label} (${spouseLabel.label})` };
+    }
+  }
+
+  // 11. Grandchildren (Cháu Nội/Ngoại)
   if (member.parentId) {
     const parent = members.find(p => p.id === member.parentId);
     if (parent && parent.parentId === currentUserId) {
@@ -209,12 +249,19 @@ export function getKinshipLabel(member: Member, members: Member[], currentUserId
     }
   }
 
-  // 11. Nieces and Nephews (Cháu - con của anh chị em)
+  // 12. Nieces and Nephews (Cháu - con của anh chị em hoặc anh chị em họ)
   if (member.parentId) {
     const parent = members.find(p => p.id === member.parentId);
-    if (parent && parent.parentId === me.parentId && parent.id !== me.id) {
-      const base = member.gender === Gender.MALE ? 'Cháu Trai' : 'Cháu Gái';
-      return { label: base, subLabel: `${base} (con của ${getKinshipLabel(parent, members, currentUserId)?.label})` };
+    if (parent && parent.id !== currentUserId) {
+      const parentLabel = getKinshipLabel(parent, members, currentUserId);
+      if (parentLabel?.label.includes('Anh') || parentLabel?.label.includes('Chị') || parentLabel?.label.includes('Em')) {
+        const isCousinKid = parentLabel.label.includes('Họ');
+        const base = member.gender === Gender.MALE ? 'Cháu Trai' : 'Cháu Gái';
+        return { 
+          label: isCousinKid ? `${base} (họ)` : base, 
+          subLabel: `${base} (con của ${parentLabel.label})` 
+        };
+      }
     }
   }
 

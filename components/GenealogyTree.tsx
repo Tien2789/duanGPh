@@ -55,8 +55,13 @@ const MemberNode = ({ data }: { data: { member: Member; members: Member[]; onSel
       {/* Universal Handles */}
       <Handle type="target" position={Position.Top} id="top" className="w-2 h-2 !bg-[var(--color-son)] border-white border" />
       <Handle type="target" position={Position.Left} id="left" className="w-2 h-2 !bg-[var(--color-son)] border-white border" />
-      <Handle type="source" position={Position.Bottom} id="bottom" className="w-2 h-2 !bg-[var(--color-son)] border-white border" />
-      <Handle type="source" position={Position.Right} id="right" className="w-2 h-2 !bg-[var(--color-son)] border-white border" />
+      <Handle type="target" position={Position.Right} id="right" className="w-2 h-2 !bg-[var(--color-son)] border-white border" />
+      <Handle type="target" position={Position.Bottom} id="bottom" className="w-2 h-2 !bg-[var(--color-son)] border-white border" />
+      
+      <Handle type="source" position={Position.Top} id="top-src" className="w-2 h-2 !bg-[var(--color-son)] border-white border opacity-0" />
+      <Handle type="source" position={Position.Left} id="left-src" className="w-2 h-2 !bg-[var(--color-son)] border-white border opacity-0" />
+      <Handle type="source" position={Position.Right} id="right-src" className="w-2 h-2 !bg-[var(--color-son)] border-white border opacity-0" />
+      <Handle type="source" position={Position.Bottom} id="bottom-src" className="w-2 h-2 !bg-[var(--color-son)] border-white border opacity-0" />
       
       <div className="flex flex-col items-center relative z-10">
         {member.generation === 1 && (
@@ -135,11 +140,13 @@ const MemberNode = ({ data }: { data: { member: Member; members: Member[]; onSel
 };
 
 const UnionNode = () => (
-  <div className="w-3 h-3 rounded-full bg-[var(--color-son)] border-2 border-white shadow-sm flex items-center justify-center">
-    <Handle type="target" position={Position.Top} id="top" className="opacity-0" />
-    <Handle type="source" position={Position.Bottom} id="bottom" className="opacity-0" />
-    <Handle type="target" position={Position.Left} id="left" className="opacity-0" />
-    <Handle type="target" position={Position.Right} id="right" className="opacity-0" />
+  <div className="w-5 h-5 rounded-full bg-[var(--color-son)] border-2 border-white shadow-md flex items-center justify-center relative">
+    {/* Explicit handles with better target areas */}
+    <Handle type="target" position={Position.Top} id="top" style={{ top: -2, left: '50%', width: 10, height: 10, transform: 'translateX(-50%)' }} className="!bg-[var(--color-son)] opacity-0" />
+    <Handle type="source" position={Position.Bottom} id="bottom" style={{ bottom: -2, left: '50%', width: 10, height: 10, transform: 'translateX(-50%)' }} className="!bg-[var(--color-son)] opacity-0" />
+    <Handle type="target" position={Position.Left} id="left" style={{ left: -2, top: '50%', width: 10, height: 10, transform: 'translateY(-50%)' }} className="!bg-[var(--color-son)] opacity-0" />
+    <Handle type="target" position={Position.Right} id="right" style={{ right: -2, top: '50%', width: 10, height: 10, transform: 'translateY(-50%)' }} className="!bg-[var(--color-son)] opacity-0" />
+    <div className="w-2 h-2 rounded-full bg-white opacity-40 animate-pulse" />
   </div>
 );
 
@@ -464,11 +471,14 @@ function GenealogyTreeContent({
             if (layoutModel === 2) {
               const commonChildren = member.childrenIds.filter(id => spouse.childrenIds.includes(id));
               if (commonChildren.length > 0) {
+                const unionId = `union-${[member.id, sId].sort().join('-')}`;
+                // Calculate center between husband right edge (220) and wife left edge
+                const unionX = (currentX + 220 + spouseX) / 2 - 10; // -10 for half w-5 width
                 nodes.push({
-                  id: `union-${member.id}-${sId}`,
+                  id: unionId,
                   type: 'union',
                   data: { layoutModel },
-                  position: { x: spouseX - 30, y: (gen - 1) * 350 + 85 },
+                  position: { x: unionX, y: (gen - 1) * 350 + 85 },
                 });
               }
             }
@@ -500,9 +510,10 @@ function GenealogyTreeContent({
           : { stroke: '#D4AF37', strokeWidth: 2 };
 
         if (layoutModel === 2 && father && mother && membersToRender.find(m => m.id === mother.id)) {
+          const unionId = `union-${[father.id, mother.id].sort().join('-')}`;
           edges.push({
             id: `e-union-${member.id}`,
-            source: `union-${father.id}-${mother.id}`,
+            source: unionId,
             target: member.id,
             sourceHandle: 'bottom',
             animated: !isAdopted,
@@ -517,7 +528,7 @@ function GenealogyTreeContent({
               target: member.id,
               animated: !isAdopted,
               targetHandle: layoutModel === 4 ? 'left' : 'top',
-              sourceHandle: layoutModel === 4 ? 'right' : 'bottom',
+              sourceHandle: layoutModel === 4 ? 'right-src' : 'bottom-src',
               style: edgeStyle,
             });
           }
@@ -531,19 +542,20 @@ function GenealogyTreeContent({
           if (spouse) {
             const commonChildren = member.childrenIds.filter(id => spouse.childrenIds.includes(id));
             if (layoutModel === 2 && commonChildren.length > 0) {
+              const unionId = `union-${[member.id, spouseId].sort().join('-')}`;
               edges.push({
-                id: `s-${member.id}-u`,
+                id: `s-${member.id}-${spouseId}-u-primary`,
                 source: member.id,
-                target: `union-${member.id}-${spouseId}`,
-                sourceHandle: 'right',
+                target: unionId,
+                sourceHandle: 'right-src',
                 targetHandle: 'left',
                 style: { stroke: '#D4AF37', strokeWidth: 2 },
               });
               edges.push({
-                id: `s-${spouseId}-u`,
+                id: `s-${spouseId}-${member.id}-u-secondary`,
                 source: spouseId,
-                target: `union-${member.id}-${spouseId}`,
-                sourceHandle: 'left',
+                target: unionId,
+                sourceHandle: 'left-src',
                 targetHandle: 'right',
                 style: { stroke: '#D4AF37', strokeWidth: 2 },
               });
@@ -552,7 +564,7 @@ function GenealogyTreeContent({
                 id: `spouse-${pairId}`,
                 source: member.id,
                 target: spouseId,
-                sourceHandle: layoutModel === 4 ? 'bottom' : 'right',
+                sourceHandle: layoutModel === 4 ? 'bottom-src' : 'right-src',
                 targetHandle: layoutModel === 4 ? 'top' : 'left',
                 style: { stroke: '#FFB6C1', strokeWidth: 2, strokeDasharray: '5 5' },
                 type: 'simplebezier',
