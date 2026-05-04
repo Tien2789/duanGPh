@@ -19,12 +19,13 @@ import { Member, Gender } from '@/lib/types';
 import { Award, User } from 'lucide-react';
 import { cn, getKinshipLabel } from '@/lib/utils';
 import Image from 'next/image';
+import dagre from 'dagre';
 
 const CURRENT_USER_ID = '6'; // Simulating "Tiến Phan" as the logged-in user
 
 // custom node
-const MemberNode = ({ data }: { data: { member: Member; members: Member[]; onSelect: (m: Member) => void; selectedMemberId?: string; layoutModel?: 1 | 2 | 3 | 4; spouseIndex?: number } }) => {
-  const { member, members, onSelect, selectedMemberId, layoutModel, spouseIndex } = data;
+const MemberNode = ({ data }: { data: { member: Member; members: Member[]; onSelect: (m: Member) => void; selectedMemberId?: string; spouseIndex?: number } }) => {
+  const { member, members, onSelect, selectedMemberId, spouseIndex } = data;
   
   const isFemale = member.gender === Gender.FEMALE;
   const isChief = member.isChief;
@@ -155,16 +156,55 @@ const nodeTypes = {
   union: UnionNode,
 };
 
+// Dagre Layout Helper
+const getLayoutedElements = (nodes: Node[], edges: Edge[]) => {
+  const dagreGraph = new dagre.graphlib.Graph();
+  dagreGraph.setDefaultEdgeLabel(() => ({}));
+  dagreGraph.setGraph({ 
+    rankdir: 'TB', 
+    nodesep: 200, 
+    ranksep: 200, 
+    ranker: 'longest-path' 
+  });
+
+  const nodeWidth = 220;
+  const nodeHeight = 180;
+
+  nodes.forEach((node) => {
+    dagreGraph.setNode(node.id, { 
+      width: node.type === 'union' ? 10 : nodeWidth, 
+      height: node.type === 'union' ? 10 : nodeHeight 
+    });
+  });
+
+  edges.forEach((edge) => {
+    dagreGraph.setEdge(edge.source, edge.target);
+  });
+
+  dagre.layout(dagreGraph);
+
+  const layoutedNodes = nodes.map((node) => {
+    const nodeWithPosition = dagreGraph.node(node.id);
+    return {
+      ...node,
+      position: {
+        x: nodeWithPosition.x - (node.type === 'union' ? 5 : nodeWidth / 2),
+        y: nodeWithPosition.y - (node.type === 'union' ? 5 : nodeHeight / 2),
+      },
+    };
+  });
+
+  return { nodes: layoutedNodes, edges };
+};
+
 function GenealogyTreeContent({ 
   members, 
   onSelectMember, 
-  layoutModel = 2, 
   viewMode = 'all',
   selectedMemberId 
 }: { 
   members: Member[]; 
   onSelectMember: (m: Member) => void;
-  layoutModel?: 1 | 2 | 3 | 4;
   viewMode?: 'all' | 'paternal' | 'maternal' | 'nam-dinh';
   selectedMemberId?: string;
 }) {
@@ -176,7 +216,6 @@ function GenealogyTreeContent({
     const result = new Set<string>();
     
     if (viewMode === 'nam-dinh') {
-      // Find top ancestors (Generation 1)
       const roots = members.filter(m => m.generation === 1);
       
       const processNamDinh = (mId: string) => {
@@ -184,11 +223,8 @@ function GenealogyTreeContent({
         if (!m) return;
         
         result.add(m.id);
-        
-        // Add wives/spouses
         m.spouseIds.forEach(sId => result.add(sId));
         
-        // Process children
         m.childrenIds.forEach(cId => {
           const child = members.find(x => x.id === cId);
           if (!child) return;
@@ -196,22 +232,14 @@ function GenealogyTreeContent({
           if (child.gender === Gender.MALE) {
             processNamDinh(child.id);
           } else if (child.spouseIds.length === 0) {
-            // Unmarried daughter
             result.add(child.id);
           }
-          // Married daughters are included if we want to show the leaf, but their subtree is cut.
-          // Based on user: "cộng thêm những người con gái CHƯA có chồng. Cắt bỏ toàn bộ nhánh hậu duệ của con gái đã lấy chồng"
-          // This implies if a daughter HAS a husband, she is excluded OR just her branches are cut.
-          // Usually "Nam Dinh" excludes married out daughters.
         });
       };
       
       roots.forEach(r => {
         if (r.gender === Gender.MALE) processNamDinh(r.id);
-        else {
-          // If root is female (unlikely for "Thuy To" usually, but possible in data)
-          result.add(r.id);
-        }
+        else result.add(r.id);
       });
       
       return members.filter(m => result.has(m.id));
@@ -280,318 +308,140 @@ function GenealogyTreeContent({
     return members.filter(m => result.has(m.id));
   }, [members, viewMode, selectedMemberId]);
 
-  const initialNodes: Node[] = useMemo(() => {
-    const nodes: Node[] = [];
-    const membersToRender = filteredMembers;
-    const generations = Array.from(new Set(membersToRender.map(m => m.generation))).sort((a, b) => a - b);
-    
-    // Radial Layout (Model 3)
-    if (layoutModel === 3) {
-      const centerX = 1000;
-      const centerY = 1000;
-      const centerId = selectedMemberId || membersToRender.find(m => m.generation === 1)?.id;
-      
-      if (!centerId) return [];
-
-      const visited = new Set<string>();
-      const addRadial = (mId: string, depth: number, angle: number, spread: number) => {
-        if (visited.has(mId)) return;
-        const member = membersToRender.find(m => m.id === mId);
-        if (!member) return;
-        visited.add(mId);
-
-        const radius = depth * 350;
-        const x = centerX + radius * Math.cos(angle);
-        const y = centerY + radius * Math.sin(angle);
-
-        nodes.push({
-          id: member.id,
-          type: 'member',
-          data: { 
-            member, 
-            members: membersToRender, 
-            onSelect: onSelectMember,
-            selectedMemberId,
-            layoutModel
-          },
-          position: { x, y },
-        });
-
-        // Add children in radial spread (sorted by birthOrder)
-        const sortedChildren = [...member.childrenIds].sort((a, b) => {
-          const mA = membersToRender.find(m => m.id === a);
-          const mB = membersToRender.find(m => m.id === b);
-          return (mA?.birthOrder || 0) - (mB?.birthOrder || 0);
-        });
-
-        if (sortedChildren.length > 0) {
-          const childSpread = spread / (sortedChildren.length + 1);
-          sortedChildren.forEach((cId, idx) => {
-            const childAngle = angle - spread/2 + childSpread * (idx + 1);
-            addRadial(cId, depth + 1, childAngle, spread / 2);
-          });
-        }
-
-        // Add spouses in radial spread
-        member.spouseIds.forEach((sId, sIdx) => {
-          if (!visited.has(sId)) {
-            const spouse = membersToRender.find(m => m.id === sId);
-            if (spouse) {
-              visited.add(sId);
-              nodes.push({
-                id: spouse.id,
-                type: 'member',
-                data: { 
-                  member: spouse, 
-                  members: membersToRender, 
-                  onSelect: onSelectMember, 
-                  selectedMemberId, 
-                  layoutModel,
-                  spouseIndex: sIdx
-                },
-                position: { x: x + 150 + (sIdx * 160), y: y + 50 },
-              });
-            }
-          }
-        });
-      };
-
-      addRadial(centerId, 0, 0, Math.PI * 2);
-      return nodes;
-    }
-
-    // Horizontal Layout (Model 4) - Dạng cột
-    if (layoutModel === 4) {
-      const genWidth = 600;
-      const memberHeight = 220;
-      
-      generations.forEach((gen, gIdx) => {
-        const genMembers = membersToRender.filter(m => m.generation === gen);
-        // Sort gen members? Usually we want to follow parents. 
-        // For simplicity we just follow order but sorting by birthOrder helps if they have same parent.
-        genMembers.sort((a, b) => (a.birthOrder || 0) - (b.birthOrder || 0));
-
-        let currentY = 0;
-        const processedIds = new Set<string>();
-
-        genMembers.forEach(member => {
-          if (processedIds.has(member.id)) return;
-
-          nodes.push({
-            id: member.id,
-            type: 'member',
-            data: { 
-              member, 
-              members: membersToRender, 
-              onSelect: onSelectMember,
-              selectedMemberId,
-              layoutModel
-            },
-            position: { x: gIdx * genWidth, y: currentY },
-          });
-          processedIds.add(member.id);
-
-          // All spouses
-          member.spouseIds.forEach((sId, sIdx) => {
-            const spouse = membersToRender.find(m => m.id === sId && m.generation === gen);
-            if (spouse && !processedIds.has(sId)) {
-              nodes.push({
-                id: spouse.id,
-                type: 'member',
-                data: { 
-                  member: spouse, 
-                  members: membersToRender, 
-                  onSelect: onSelectMember,
-                  selectedMemberId,
-                  layoutModel,
-                  spouseIndex: sIdx
-                },
-                position: { x: gIdx * genWidth, y: currentY + (sIdx + 1) * 180 },
-              });
-              processedIds.add(spouse.id);
-            }
-          });
-
-          const maxSpouses = member.spouseIds.filter(id => membersToRender.some(m => m.id === id)).length;
-          currentY += memberHeight * (maxSpouses + 1);
-        });
-      });
-      return nodes;
-    }
-
-    // Vertical Layouts (Model 1 & 2)
-    generations.forEach(gen => {
-      const genMembers = membersToRender.filter(m => m.generation === gen);
-      // Sort by parent then birthOrder for visual grouping
-      genMembers.sort((a, b) => {
-        if (a.parentId !== b.parentId) return (a.parentId || '').localeCompare(b.parentId || '');
-        return (a.birthOrder || 0) - (b.birthOrder || 0);
-      });
-
-      let currentX = 0;
-      const processedIds = new Set<string>();
-
-      genMembers.forEach(member => {
-        if (processedIds.has(member.id)) return;
-
-        nodes.push({
-          id: member.id,
-          type: 'member',
-          data: { 
-            member, 
-            members: membersToRender, 
-            onSelect: onSelectMember,
-            selectedMemberId,
-            layoutModel
-          },
-          position: { x: currentX, y: (gen - 1) * 350 },
-        });
-        processedIds.add(member.id);
-
-        // All spouses
-        let spouseX = currentX + 260;
-        member.spouseIds.forEach((sId, sIdx) => {
-          const spouse = membersToRender.find(m => m.id === sId && m.generation === gen);
-          if (spouse && !processedIds.has(sId)) {
-            nodes.push({
-              id: spouse.id,
-              type: 'member',
-              data: { 
-                member: spouse, 
-                members: membersToRender, 
-                onSelect: onSelectMember,
-                selectedMemberId,
-                layoutModel,
-                spouseIndex: sIdx
-              },
-              position: { x: spouseX, y: (gen - 1) * 350 },
-            });
-            processedIds.add(spouse.id);
-
-            if (layoutModel === 2) {
-              const commonChildren = member.childrenIds.filter(id => spouse.childrenIds.includes(id));
-              if (commonChildren.length > 0) {
-                const unionId = `union-${[member.id, sId].sort().join('-')}`;
-                // Calculate center between husband right edge (220) and wife left edge
-                const unionX = (currentX + 220 + spouseX) / 2 - 10; // -10 for half w-5 width
-                nodes.push({
-                  id: unionId,
-                  type: 'union',
-                  data: { layoutModel },
-                  position: { x: unionX, y: (gen - 1) * 350 + 85 },
-                });
-              }
-            }
-            spouseX += 260;
-          }
-        });
-
-        const activeSpouses = member.spouseIds.filter(id => membersToRender.some(m => m.id === id)).length;
-        currentX += 340 + (activeSpouses * 260);
-      });
-    });
-    
-    return nodes;
-  }, [filteredMembers, onSelectMember, layoutModel, selectedMemberId]);
-
-  const initialEdges: Edge[] = useMemo(() => {
-    const edges: Edge[] = [];
-    const membersToRender = filteredMembers;
-    const processedSpouseLinks = new Set<string>();
-
-    membersToRender.forEach(member => {
-      if (member.parentId) {
-        const father = membersToRender.find(m => m.id === member.parentId);
-        const mother = father?.spouseIds.length ? membersToRender.find(m => father.spouseIds.includes(m.id) && m.childrenIds.includes(member.id)) : null;
-
-        const isAdopted = member.isAdopted;
-        const edgeStyle = isAdopted 
-          ? { stroke: '#A0A0A0', strokeWidth: 2, strokeDasharray: '5 5' } 
-          : { stroke: '#D4AF37', strokeWidth: 2 };
-
-        if (layoutModel === 2 && father && mother && membersToRender.find(m => m.id === mother.id)) {
-          const unionId = `union-${[father.id, mother.id].sort().join('-')}`;
-          edges.push({
-            id: `e-union-${member.id}`,
-            source: unionId,
-            target: member.id,
-            sourceHandle: 'bottom',
-            animated: !isAdopted,
-            style: edgeStyle,
-          });
-        } else {
-          const parentInView = membersToRender.find(m => m.id === member.parentId);
-          if (parentInView) {
-            edges.push({
-              id: `e-${member.parentId}-${member.id}`,
-              source: member.parentId,
-              target: member.id,
-              animated: !isAdopted,
-              targetHandle: layoutModel === 4 ? 'left' : 'top',
-              sourceHandle: layoutModel === 4 ? 'right-src' : 'bottom-src',
-              style: edgeStyle,
-            });
-          }
-        }
-      }
-
-      member.spouseIds.forEach(spouseId => {
-        const pairId = [member.id, spouseId].sort().join('-');
-        if (!processedSpouseLinks.has(pairId)) {
-          const spouse = membersToRender.find(m => m.id === spouseId);
-          if (spouse) {
-            const commonChildren = member.childrenIds.filter(id => spouse.childrenIds.includes(id));
-            if (layoutModel === 2 && commonChildren.length > 0) {
-              const unionId = `union-${[member.id, spouseId].sort().join('-')}`;
-              edges.push({
-                id: `s-${member.id}-${spouseId}-u-primary`,
-                source: member.id,
-                target: unionId,
-                sourceHandle: 'right-src',
-                targetHandle: 'left',
-                style: { stroke: '#D4AF37', strokeWidth: 2 },
-              });
-              edges.push({
-                id: `s-${spouseId}-${member.id}-u-secondary`,
-                source: spouseId,
-                target: unionId,
-                sourceHandle: 'left-src',
-                targetHandle: 'right',
-                style: { stroke: '#D4AF37', strokeWidth: 2 },
-              });
-            } else {
-              edges.push({
-                id: `spouse-${pairId}`,
-                source: member.id,
-                target: spouseId,
-                sourceHandle: layoutModel === 4 ? 'bottom-src' : 'right-src',
-                targetHandle: layoutModel === 4 ? 'top' : 'left',
-                style: { stroke: '#FFB6C1', strokeWidth: 2, strokeDasharray: '5 5' },
-                type: 'simplebezier',
-              });
-            }
-            processedSpouseLinks.add(pairId);
-          }
-        }
-      });
-    });
-    return edges;
-  }, [filteredMembers, layoutModel]);
-
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
 
   useEffect(() => {
-    setNodes(initialNodes);
-    setEdges(initialEdges);
-  }, [initialNodes, initialEdges, setNodes, setEdges]);
+    // 1. Create Member Nodes
+    const memberNodes: Node[] = filteredMembers.map(member => ({
+      id: member.id,
+      type: 'member',
+      data: {
+        member,
+        members,
+        onSelect: onSelectMember,
+        selectedMemberId,
+      },
+      position: { x: 0, y: 0 },
+    }));
+
+    const unionNodes: Node[] = [];
+    const newEdges: Edge[] = [];
+    const processedUnions = new Set<string>();
+
+    // 2. Generate Union Nodes and Edges
+    filteredMembers.forEach(member => {
+      member.spouseIds.forEach((spouseId, sIdx) => {
+        const spouse = members.find(m => m.id === spouseId);
+        if (!spouse) return;
+
+        // Ensure both spouses are in view or at least the link is valid
+        // Actually, if a spouse is NOT in filteredMembers, we might still want to show the union if there's a child?
+        // But for consistency let's stick to filtered context.
+        
+        const pairId = [member.id, spouseId].sort().join('-');
+        const unionId = `union-${pairId}`;
+        
+        if (!processedUnions.has(unionId)) {
+          processedUnions.add(unionId);
+
+          // Find common children who are in filteredMembers
+          const commonChildrenIds = member.childrenIds.filter(cId => 
+            spouse.childrenIds.includes(cId) && filteredMembers.some(fm => fm.id === cId)
+          );
+
+          // ALWAYS create union node as requested: "nếu một member có spouseIds, BẮT BUỘC tạo một Node trung gian"
+          unionNodes.push({
+            id: unionId,
+            type: 'union',
+            data: {},
+            position: { x: 0, y: 0 },
+          });
+
+          // Edges: member -> union
+          newEdges.push({
+            id: `e-${member.id}-${unionId}`,
+            source: member.id,
+            target: unionId,
+            type: 'smoothstep',
+            style: { stroke: '#D4AF37', strokeWidth: 2 },
+          });
+
+          // Edges: spouse -> union
+          newEdges.push({
+            id: `e-${spouseId}-${unionId}`,
+            source: spouseId,
+            target: unionId,
+            type: 'smoothstep',
+            style: { stroke: '#D4AF37', strokeWidth: 2 },
+          });
+
+          // Edges: union -> child (common children sorted by birthOrder)
+          const sortedChildren = commonChildrenIds
+            .map(cId => filteredMembers.find(m => m.id === cId)!)
+            .sort((a, b) => (a.birthOrder || 0) - (b.birthOrder || 0));
+
+          sortedChildren.forEach(child => {
+            newEdges.push({
+              id: `e-${unionId}-${child.id}`,
+              source: unionId,
+              target: child.id,
+              type: 'smoothstep',
+              animated: !child.isAdopted,
+              style: child.isAdopted 
+                ? { stroke: '#A0A0A0', strokeWidth: 2, strokeDasharray: '5 5' } 
+                : { stroke: '#D4AF37', strokeWidth: 2 },
+            });
+          });
+        }
+      });
+    });
+
+    // 3. Handle cases where children don't have a common parent union (e.g. only one parent in data)
+    filteredMembers.forEach(child => {
+      if (child.parentId && !newEdges.some(e => e.target === child.id)) {
+        const parent = filteredMembers.find(m => m.id === child.parentId);
+        if (parent) {
+          newEdges.push({
+            id: `e-${parent.id}-${child.id}`,
+            source: parent.id,
+            target: child.id,
+            type: 'smoothstep',
+            animated: !child.isAdopted,
+            style: child.isAdopted 
+              ? { stroke: '#A0A0A0', strokeWidth: 2, strokeDasharray: '5 5' } 
+              : { stroke: '#D4AF37', strokeWidth: 2 },
+          });
+        }
+      }
+    });
+
+    // 4. Update Spouse Labels in Data (for UI)
+    memberNodes.forEach(node => {
+      const m = (node.data as any).member as Member;
+      // We can find if this person is a spouse of someone who is "primary" (first parent found)
+      // but the current MemberNode already handles spouseIndex if we pass it.
+      // However, with dagre, indices might be different. Let's just pass it if possible.
+      const firstPrimarySpouse = filteredMembers.find(fm => fm.spouseIds.includes(m.id));
+      if (firstPrimarySpouse) {
+        node.data = { ...node.data, spouseIndex: firstPrimarySpouse.spouseIds.indexOf(m.id) };
+      }
+    });
+
+    // 5. Layout with Dagre
+    const allNodes = [...memberNodes, ...unionNodes];
+    const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(allNodes, newEdges);
+
+    setNodes(layoutedNodes);
+    setEdges(layoutedEdges);
+  }, [filteredMembers, members, onSelectMember, selectedMemberId, setNodes, setEdges]);
 
   // Auto-center on selected member
   useEffect(() => {
-    if (selectedMemberId) {
+    if (selectedMemberId && nodes.length > 0) {
       const node = nodes.find(n => n.id === selectedMemberId);
       if (node) {
-        setCenter(node.position.x + 80, node.position.y + 100, { duration: 800, zoom: 0.9 });
+        setCenter(node.position.x + 110, node.position.y + 90, { duration: 800, zoom: 0.9 });
       }
     }
   }, [selectedMemberId, nodes, setCenter]);
