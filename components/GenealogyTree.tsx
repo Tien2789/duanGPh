@@ -162,9 +162,9 @@ const getLayoutedElements = (nodes: Node[], edges: Edge[]) => {
   dagreGraph.setDefaultEdgeLabel(() => ({}));
   dagreGraph.setGraph({ 
     rankdir: 'TB', 
-    nodesep: 200, 
-    ranksep: 200, 
-    ranker: 'longest-path' 
+    nodesep: 50, // More compact horizontal spacing
+    ranksep: 100, // More compact vertical spacing
+    ranker: 'network-simplex' // Better for compacting small branches
   });
 
   const nodeWidth = 220;
